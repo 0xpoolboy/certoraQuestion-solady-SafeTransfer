@@ -1,66 +1,56 @@
-## Foundry
+# Certora Question: Solady SafeTransferLib
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+## Summary
+I am currently verifying a project that uses Solady's SafeTransferLib.
+My specification includes a property that `currentContract` should hold zero balance when the function `IManager.finalize(address)` was called.
 
-Foundry consists of:
+This repository contains an example project reproducing the issue.
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+The verification target is `Pool` contract.
+[Pool.sol](src/Pool.sol) implements a function `withdrawFromPool(address, uint256)` that uses `token.safeTransfer(address, uint256)` to transfer the full amount out of the contract before `IManager.finalize(address)` is called.
+Therefore the property should be pretty straight forward to implement.
 
-## Documentation
+However, it's not (for me).
+The balances of any token will be havoc'd.
+This happens when the `call` instruction in SafeTransferLib's [line 255](https://github.com/Vectorized/solady/blob/main/src/utils/SafeTransferLib.sol#L255) is reached.
+The prover cannot resolve the callee and therefore havoc's the call.
 
-https://book.getfoundry.sh/
+The relevant implementation of `safeTransfer(address, address, uint256)` can be found here:
 
-## Usage
+https://github.com/Vectorized/solady/blob/7593af59974a1bb12ebe10d87b95693c293234ed/src/utils/SafeTransferLib.sol#L245-L263
 
-### Build
 
-```shell
-$ forge build
+The following screenshot from the report shows this:
+
+![Screenshot of failed call resolution](doc/img/CallTrace.png)
+
+All contracts but `Pool` are havoc'd, which includes `token`. If the contract were to use `IERC20(token).transfer(...)` instead this issue would not araise.
+
+## Question
+
+How can I prevent that `token.balanceOf(currentContract)` is havoc'd?
+
+## Example
+This repository contains an example project which showcases the issue.
+
+I am using certora-cli version 6.1.4 and solc version 0.8.13.
+
+### Report
+https://prover.certora.com/output/36946/b64754f161c144f9888c53bc4da8866a?anonymousKey=8d7734f55831de6be41693ad5fb52b22093df8a7
+
+### Install
+I am using `virualenv` to install `solc-select` and `certora-cli` locally.
+
+To recreate my setup do the following:
+```bash
+git clone git@github.com:0xpoolboy/certoraQuestion-solady-SafeTransfer.git && cd certoraQuestion-solady-SafeTransfer
+forge install
+virtualenv venv && source venv/bin/activate
+pip -r pip install -r requirements.txt && source venv/bin/activate
+solc-select install 0.8.13 && solc-select use 0.8.13
 ```
 
-### Test
-
-```shell
-$ forge test
-```
-
-### Format
-
-```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
+To reproduce the report run:
+```bash
+certora/confs/Pool.conf --rule balanceZeroWhenFinialized --method 'withdrawFromPool(address,uint256)'
 ```
